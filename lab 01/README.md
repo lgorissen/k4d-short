@@ -204,8 +204,6 @@ Hello, you landed on Terra10 and host terra10-p6vmd welcomes you!
 developer@developer-VirtualBox:~$
 ```
 
-
-
 ## 1.4 Kubernetes Networking and Pods
 
 A Pod is a group of Containers that runs on the same Kubernetes Node and in the same Linux namespace. Therefore, the Pod not only has its own files and processes, but also its own network interfaces and hostname. So, the Pod has its own IP address and the hostname is the same as the Pod name. IP address and hostname are always unique across the whole Kubernetes cluster.
@@ -213,3 +211,131 @@ A Pod is a group of Containers that runs on the same Kubernetes Node and in the 
 As a consequence, all Containers that run in the same Pod share the same hostname. Which also means that they can address each other using  `localhost:\<port>` addresses. But you do need to avoid port conflicts in a Pod. 
 
 **Often, trouble shooting a Pod starts with determining whether it can be accessed. For a real good analysis, you need to master the Kubernetes networking. Spend some time on it!**
+
+
+## 1.5 Scaling with the ReplicationController
+
+First, have a look at the terra10 ReplicationController:
+```bash
+developer@developer-VirtualBox:~$ kubectl get rc terra10 
+NAME      DESIRED   CURRENT   READY     AGE
+terra10   1         1         1         7h
+developer@developer-VirtualBox:~$
+```
+The ReplicationController column DESIRED shows the number of Pods that the ReplicationController wants to be alive. The CURRENT column is the well ... current number of Pods. 
+
+Now scaling it turns out to be simple:
+```bash
+developer@developer-VirtualBox:~$ kubectl scale rc terra10 --replicas=3
+replicationcontroller/terra10 scaled
+developer@developer-VirtualBox:~$ kubectl get rc terra10
+NAME      DESIRED   CURRENT   READY     AGE
+terra10   3         3         1         8h
+developer@developer-VirtualBox:~$
+``` 
+In the above listing, the `k get rc terra10` command was given immediately after the `k scale ...` command. It shows that 3 Pods are present, but the 2 new Pods are not Ready. Running the command again after some time shows that all Pods are Ready:
+```bash
+developer@developer-VirtualBox:~$ kubectl get rc terra10 
+NAME      DESIRED   CURRENT   READY     AGE
+terra10   3         3         3         8h
+developer@developer-VirtualBox:~$
+``` 
+Looking at the Pods:
+```bash
+developer@developer-VirtualBox:~$ kubectl get pods
+NAME            READY     STATUS    RESTARTS   AGE
+terra10-98s4k   1/1       Running   0          7m
+terra10-fw2c9   1/1       Running   0          7m
+terra10-p6vmd   1/1       Running   1          8h
+developer@developer-VirtualBox:~$
+```
+When pointing the browser to the Service terra10-http IP address, the page will always show the same result. The sticky session stuff makes you hit the same Pod over and over again. However, using curl will show that you the Service terra10-http distributes the calls over the Pods in a random order:
+```bash
+developer@developer-VirtualBox:$ kubectl get services
+NAME           TYPE           CLUSTER-IP      EXTERNAL-IP   PORT(S)          AGE
+kubernetes     ClusterIP      10.96.0.1       <none>        443/TCP          50d
+terra10-http   LoadBalancer   10.107.86.130   <pending>     8080:30370/TCP   16m
+developer@developer-VirtualBox:~$
+developer@developer-VirtualBox:~$ curl 10.107.86.130:8080
+Hello, you landed on Terra10 and host terra10-98s4k welcomes you!
+developer@developer-VirtualBox:~$ curl 10.107.86.130:8080
+Hello, you landed on Terra10 and host terra10-fw2c9 welcomes you!
+developer@developer-VirtualBox:~$ curl 10.107.86.130:8080
+Hello, you landed on Terra10 and host terra10-98s4k welcomes you!
+developer@developer-VirtualBox:~$ curl 10.107.86.130:8080
+Hello, you landed on Terra10 and host terra10-p6vmd welcomes you!
+developer@developer-VirtualBox:~$ curl 10.107.86.130:8080
+Hello, you landed on Terra10 and host terra10-p6vmd welcomes you!
+developer@developer-VirtualBox:~$ curl 10.107.86.130:8080
+Hello, you landed on Terra10 and host terra10-p6vmd welcomes you!
+```
+
+***
+You can now try to scale down to 2 Pods using the command `kubectl scale rc terra10 --replicas=2`
+
+Carefully examine what happens to your Pods!
+
+## 1.6 Cleaning up
+
+*Even though I'm not that good at cleaning up ... I **will** ask you to do so*.
+
+So far, we have created lots of Kubernetes objects: Pods, ReplicationController, and a Service. Now it is time to clean up before your loose track of what's going on in your minikube. 
+
+Without much further ado...
+
+**Delete a Pod**
+
+Start simple by deleting a Pod:
+
+```bash
+developer@developer-VirtualBox:~$ kubectl get pods
+NAME            READY     STATUS    RESTARTS   AGE
+terra10-98s4k   1/1       Running   0          7m
+terra10-fw2c9   1/1       Running   0          7m
+terra10-p6vmd   1/1       Running   1          8h
+developer@developer-VirtualBox:~$ kubectl delete pod terra10-98s4k
+pod "terra10-98s4k" deleted
+developer@developer-VirtualBox:~$ kubectl get pod
+developer@developer-VirtualBox:~$ kubectl get pods
+NAME            READY     STATUS    RESTARTS   AGE
+terra10-bljph   1/1       Running   0          32s
+terra10-fw2c9   1/1       Running   0          7m
+terra10-p6vmd   1/1       Running   1          8h
+developer@developer-VirtualBox:~$
+```
+Great: the ReplicationController immediately starts a new copy.
+
+**Delete a ReplicationContoller (and ...)**
+
+We created a ReplicationController named `terra10` that controls 3 Pods that have a name of format `terra10-nnnn`:
+```bash
+developer@developer-VirtualBox:~$ kubectl get rc
+NAME      DESIRED   CURRENT   READY     AGE
+terra10   3         3         3         1d
+```
+Deleting the ReplicationController will also delete the Pods that the ReplicationController is managing:
+```bash
+developer@developer-VirtualBox:~$ kubectl delete rc terra10 
+replicationcontroller "terra10" deleted
+developer@developer-VirtualBox:~$ kubectl get pod
+No resources found.
+developer@developer-VirtualBox:~$
+```
+
+**Delete a service**
+
+Now we do have one 'dangling' service named `terra10-http`. Dangling because the Pods that it refers to are already deleted... Now it's also time for the service to go:
+```bash
+developer@developer-VirtualBox:~$ kubectl get service
+NAME           TYPE           CLUSTER-IP      EXTERNAL-IP   PORT(S)          AGE
+kubernetes     ClusterIP      10.96.0.1       <none>        443/TCP          3d
+terra10-http   LoadBalancer   10.107.86.130   <pending>     8080:30370/TCP   16m
+developer@developer-VirtualBox:~$ kubectl delete service terra10-http 
+service "terra10-http" deleted
+developer@developer-VirtualBox:~$
+```
+Nice
+
+Opgeruimd staat netjes.
+
+
